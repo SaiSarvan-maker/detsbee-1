@@ -1,0 +1,190 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+enum GameStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  EXPIRED
+  DELETED
+}
+
+enum QuestionType {
+  SINGLE
+  MULTI
+  SHORT_TEXT
+  LONG_TEXT
+  EMOJI
+  SCALE
+}
+
+enum RoundKind {
+  ABOUT_ME
+  HOW_I_SEE_YOU
+}
+
+enum Visibility {
+  SHARE
+  PRIVATE
+  SKIPPED
+  DECLINED
+}
+
+enum SessionStatus {
+  STARTED
+  IN_PROGRESS
+  REVIEW
+  SUBMITTED
+  DELETED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  displayName   String
+  phone         String?
+  emailVerified Boolean   @default(false)
+  verifyToken   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  games             Game[]
+  activities        Activity[]
+  authoredQuestions Question[]
+}
+
+model QuestionCategory {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  name        String
+  description String
+  round       RoundKind
+  sortOrder   Int        @default(0)
+  questions   Question[]
+}
+
+model Question {
+  id           String           @id @default(cuid())
+  categoryId   String
+  category     QuestionCategory @relation(fields: [categoryId], references: [id])
+  creatorId    String?
+  creator      User?            @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  slug         String           @unique
+  prompt       String
+  helpText     String?
+  type         QuestionType
+  optionsJson  String?
+  round        RoundKind
+  sortOrder    Int              @default(0)
+  isOptional   Boolean          @default(false)
+  gameQuestions GameQuestion[]
+  responses    Response[]
+}
+
+model Game {
+  id               String      @id @default(cuid())
+  creatorId        String
+  creator          User        @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  title            String
+  message          String?
+  status           GameStatus  @default(DRAFT)
+  inviteTokenHash  String      @unique
+  inviteTokenHint  String
+  expiresAt        DateTime?
+  maxRespondents   Int         @default(50)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  disabledAt       DateTime?
+  deletedAt        DateTime?
+  questions        GameQuestion[]
+  sessions         RespondentSession[]
+  activities       Activity[]
+
+  @@index([creatorId])
+  @@index([status])
+}
+
+model GameQuestion {
+  id         String   @id @default(cuid())
+  gameId     String
+  game       Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+  prompt     String?
+  sortOrder  Int      @default(0)
+  required   Boolean  @default(false)
+
+  @@unique([gameId, questionId])
+  @@index([gameId])
+}
+
+model RespondentSession {
+  id               String        @id @default(cuid())
+  gameId           String
+  game             Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  displayName      String?
+  status           SessionStatus @default(STARTED)
+  consentAccepted  Boolean       @default(false)
+  consentAt        DateTime?
+  consentVersion   String?
+  retentionDays    Int           @default(90)
+  receiptTokenHash String        @unique
+  receiptTokenHint String
+  fingerprintHash  String?
+  startedAt        DateTime      @default(now())
+  submittedAt      DateTime?
+  deletedAt        DateTime?
+  expiresAt        DateTime?
+  responses        Response[]
+  consentRecords   ConsentRecord[]
+
+  @@index([gameId])
+  @@index([status])
+}
+
+model ConsentRecord {
+  id         String            @id @default(cuid())
+  sessionId  String
+  session    RespondentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  version    String
+  textHash   String
+  acceptedAt DateTime          @default(now())
+  ipHash     String?
+}
+
+model Response {
+  id          String            @id @default(cuid())
+  sessionId   String
+  session     RespondentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  questionId  String
+  question    Question          @relation(fields: [questionId], references: [id])
+  valueJson   String?
+  visibility  Visibility        @default(PRIVATE)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([sessionId, questionId])
+  @@index([sessionId])
+  @@index([visibility])
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId    String?
+  game      Game?    @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  type      String
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}

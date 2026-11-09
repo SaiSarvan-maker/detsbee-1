@@ -1,0 +1,24 @@
+{
+  "name": "detsbee",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Detsbee — consent-driven social discovery",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@detsbee/api",
+    "dev:api": "npm run dev --workspace=@detsbee/api",
+    "dev:web": "npm run dev --workspace=web",
+    "build": "node scripts/build.mjs",
+    "test": "npm run test --workspace=apps/api",
+    "db:generate": "npm run db:generate --workspace=apps/api",
+    "db:migrate": "npm run db:migrate --workspace=apps/api",
+    "db:seed": "npm run db:seed --workspace=apps/api",
+    "setup": "npm install && npm run db:generate && npm run db:migrate && npm run db:seed"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
