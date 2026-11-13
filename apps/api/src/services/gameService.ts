@@ -1,4 +1,4 @@
-import { GameStatus, type Prisma } from '@prisma/client';
+import { GameStatus } from '@prisma/client';
 import { customAlphabet } from 'nanoid';
 import { z } from 'zod';
 import { AppError, assertFound } from '../lib/errors.js';
@@ -33,15 +33,12 @@ function publicInviteUrl(token: string) {
 
 type DraftQuestion = z.infer<typeof draftQuestionSchema>;
 
-async function categoryForRound(
-  tx: Prisma.TransactionClient,
-  round: 'ABOUT_ME' | 'HOW_I_SEE_YOU',
-) {
+async function categoryForRound(round: 'ABOUT_ME' | 'HOW_I_SEE_YOU') {
   const slug = round === 'ABOUT_ME' ? 'custom-about' : 'custom-see';
-  const existing = await tx.questionCategory.findUnique({ where: { slug } });
-  if (existing) return existing;
-  return tx.questionCategory.create({
-    data: {
+  return prisma.questionCategory.upsert({
+    where: { slug },
+    update: {},
+    create: {
       slug,
       name: round === 'ABOUT_ME' ? 'Your questions' : 'Your questions about them',
       description: 'Added by the creator for this discovery.',
@@ -76,26 +73,20 @@ export async function createGame(creatorId: string, input: z.infer<typeof create
 
   const rawToken = generateInviteToken();
   const expiresAt = new Date(Date.now() + data.expiresInDays * 24 * 60 * 60 * 1000);
+  const sourceIds = [...new Set(drafts.flatMap((draft) => draft.sourceId ? [draft.sourceId] : []))];
+  const sourceRows = sourceIds.length
+    ? await prisma.question.findMany({ where: { id: { in: sourceIds } } })
+    : [];
+  const sourcesById = new Map(sourceRows.map((source) => [source.id, source]));
+  const createdQuestionIds: string[] = [];
 
-  const game = await prisma.$transaction(async (tx) => {
-    const created = await tx.game.create({
-      data: {
-        creatorId,
-        title: data.title,
-        message: data.message || null,
-        status: GameStatus.ACTIVE,
-        inviteTokenHash: hashToken(rawToken),
-        inviteTokenHint: tokenHint(rawToken),
-        expiresAt,
-        maxRespondents: data.maxRespondents,
-      },
-    });
-
+  try {
     const usedQuestionIds = new Set<string>();
+    const gameQuestions: Array<{ questionId: string; prompt: string; sortOrder: number }> = [];
     for (const [index, draft] of drafts.entries()) {
       let questionId: string | null = null;
       if (draft.sourceId && !usedQuestionIds.has(draft.sourceId)) {
-        const source = await tx.question.findUnique({ where: { id: draft.sourceId } });
+        const source = sourcesById.get(draft.sourceId);
         // The creator may edit or paraphrase a built-in prompt. Keep its
         // category when the catalog source still belongs to the same round;
         // GameQuestion.prompt stores the creator's exact wording per invite.
@@ -105,8 +96,8 @@ export async function createGame(creatorId: string, input: z.infer<typeof create
       }
 
       if (!questionId) {
-        const category = await categoryForRound(tx, draft.round);
-        const createdQuestion = await tx.question.create({
+        const category = await categoryForRound(draft.round);
+        const createdQuestion = await prisma.question.create({
           data: {
             slug: `custom-${customId()}`,
             prompt: draft.prompt,
@@ -118,40 +109,58 @@ export async function createGame(creatorId: string, input: z.infer<typeof create
           },
         });
         questionId = createdQuestion.id;
+        createdQuestionIds.push(questionId);
       }
 
       usedQuestionIds.add(questionId);
-      await tx.gameQuestion.create({
-        data: {
-          gameId: created.id,
-          questionId,
-          prompt: draft.prompt,
-          sortOrder: index,
-        },
-      });
+      gameQuestions.push({ questionId, prompt: draft.prompt, sortOrder: index });
     }
 
-    await tx.activity.create({
+    // A nested create keeps the invitation, its selected questions, and its
+    // activity record atomic without an interactive transaction callback.
+    const game = await prisma.game.create({
       data: {
-        userId: creatorId,
-        gameId: created.id,
-        type: 'game_created',
-        message: `Opened a new discovery: “${created.title}”`,
+        creatorId,
+        title: data.title,
+        message: data.message || null,
+        status: GameStatus.ACTIVE,
+        inviteTokenHash: hashToken(rawToken),
+        inviteTokenHint: tokenHint(rawToken),
+        expiresAt,
+        maxRespondents: data.maxRespondents,
+        questions: {
+          create: gameQuestions.map(({ questionId, prompt, sortOrder }) => ({
+            prompt,
+            sortOrder,
+            question: { connect: { id: questionId } },
+          })),
+        },
+        activities: {
+          create: {
+            type: 'game_created',
+            message: `Opened a new discovery: “${data.title}”`,
+            user: { connect: { id: creatorId } },
+          },
+        },
       },
     });
 
-    return created;
-  });
-
-  return {
-    id: game.id,
-    title: game.title,
-    status: game.status,
-    expiresAt: game.expiresAt,
-    inviteHint: game.inviteTokenHint,
-    inviteUrl: publicInviteUrl(rawToken),
-    inviteToken: rawToken,
-  };
+    return {
+      id: game.id,
+      title: game.title,
+      status: game.status,
+      expiresAt: game.expiresAt,
+      inviteHint: game.inviteTokenHint,
+      inviteUrl: publicInviteUrl(rawToken),
+      inviteToken: rawToken,
+    };
+  } catch (error) {
+    // Questions created for a failed invitation must not be left unattached.
+    if (createdQuestionIds.length) {
+      await prisma.question.deleteMany({ where: { id: { in: createdQuestionIds } } }).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 async function refreshExpiration(gameId: string) {
