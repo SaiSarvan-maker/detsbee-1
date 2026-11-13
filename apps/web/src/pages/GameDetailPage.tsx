@@ -48,6 +48,11 @@ export function GameDetailPage() {
     setGame(g);
     setResults(r);
     setPersonId((current) => current || r.people[0]?.id || '');
+    if (g.inviteHint === 'used') {
+      sessionStorage.removeItem(`detsbee_invite_${gameId}`);
+      setInviteUrl('');
+      setMessage('This one-time link has been used. Rotate it to create a fresh invitation.');
+    }
   }
 
   useEffect(() => {
@@ -62,7 +67,7 @@ export function GameDetailPage() {
   async function copyCachedOrRotate(forceRotate = false) {
     try {
       const cached = sessionStorage.getItem(`detsbee_invite_${gameId}`);
-      if (cached && !forceRotate) {
+      if (cached && !forceRotate && game?.inviteHint !== 'used') {
         setInviteUrl(cached);
         await navigator.clipboard?.writeText(cached).catch(() => undefined);
         setMessage('Invitation link copied.');
@@ -74,7 +79,11 @@ export function GameDetailPage() {
       sessionStorage.setItem(`detsbee_invite_${gameId}`, data.inviteUrl);
       setInviteUrl(data.inviteUrl);
       await navigator.clipboard?.writeText(data.inviteUrl).catch(() => undefined);
-      setMessage(forceRotate ? 'Rotated invitation link copied. Old links stop working.' : 'Invitation link copied.');
+      setMessage(
+        forceRotate || game?.inviteHint === 'used'
+          ? 'Fresh one-time invitation link copied. Older links no longer work.'
+          : 'Invitation link copied.',
+      );
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not prepare link');
@@ -105,7 +114,7 @@ export function GameDetailPage() {
         <h1 className="db-display mt-2 text-4xl">{game.title}</h1>
         <p className="mt-3 max-w-2xl text-ink-300">{game.message}</p>
         <p className="mt-2 text-sm text-ink-400">
-          Link hint …{game.inviteHint}
+          {game.inviteHint === 'used' ? 'This invitation link has already been used.' : `Link hint …${game.inviteHint}`}
           {game.expiresAt ? ` · expires ${new Date(game.expiresAt).toLocaleDateString()}` : ''}
         </p>
         <div className="mt-6 flex flex-wrap gap-3">
@@ -115,8 +124,14 @@ export function GameDetailPage() {
           <button className="db-btn db-btn-ghost !border-white/20 !text-cream" onClick={() => void copyCachedOrRotate(true)}>
             <RefreshCw size={16} /> Rotate link
           </button>
-          <button className="db-btn db-btn-ghost !border-white/20 !text-cream" onClick={() => void toggleEnabled()}>
-            <Link2Off size={16} /> {game.status === 'ACTIVE' ? 'Disable link' : 'Enable link'}
+          <button
+            className="db-btn db-btn-ghost !border-white/20 !text-cream"
+            onClick={() => void toggleEnabled()}
+            disabled={game.inviteHint === 'used'}
+            title={game.inviteHint === 'used' ? 'Rotate the link to create a fresh one.' : undefined}
+          >
+            <Link2Off size={16} />
+            {game.inviteHint === 'used' ? 'Used once' : game.status === 'ACTIVE' ? 'Disable link' : 'Enable link'}
           </button>
           <button className="db-btn db-btn-ghost !border-white/20 !text-cream" onClick={() => void removeGame()}>
             <Trash2 size={16} /> Delete

@@ -266,15 +266,22 @@ export async function rotateInviteLink(creatorId: string, gameId: string) {
   );
 
   const rawToken = generateInviteToken();
-  await prisma.game.update({
-    where: { id: game.id },
-    data: {
-      inviteTokenHash: hashToken(rawToken),
-      inviteTokenHint: tokenHint(rawToken),
-      status: GameStatus.ACTIVE,
-      disabledAt: null,
-    },
-  });
+  const rotatedAt = new Date();
+  await prisma.$transaction([
+    prisma.respondentSession.updateMany({
+      where: { gameId: game.id, status: { notIn: ['SUBMITTED', 'DELETED'] } },
+      data: { status: 'DELETED', deletedAt: rotatedAt },
+    }),
+    prisma.game.update({
+      where: { id: game.id },
+      data: {
+        inviteTokenHash: hashToken(rawToken),
+        inviteTokenHint: tokenHint(rawToken),
+        status: GameStatus.ACTIVE,
+        disabledAt: null,
+      },
+    }),
+  ]);
 
   return {
     inviteUrl: publicInviteUrl(rawToken),
@@ -292,6 +299,9 @@ export async function setGameEnabled(creatorId: string, gameId: string, enabled:
 
   if (game.expiresAt && game.expiresAt.getTime() < Date.now()) {
     throw new AppError(400, 'This invitation has expired', 'EXPIRED');
+  }
+  if (enabled && game.inviteTokenHint === 'used') {
+    throw new AppError(409, 'This one-time invitation has been used. Rotate the link to create a new one.', 'INVITE_USED');
   }
 
   const updated = await prisma.game.update({

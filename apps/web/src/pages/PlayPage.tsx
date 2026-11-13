@@ -173,6 +173,7 @@ export function PlayPage() {
       });
       setPhase('done');
       localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(RECEIPT_KEY);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Submit failed');
     } finally {

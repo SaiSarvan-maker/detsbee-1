@@ -1,8 +1,9 @@
-import { SessionStatus, Visibility } from '@prisma/client';
+import { GameStatus, SessionStatus, Visibility } from '@prisma/client';
 import { z } from 'zod';
 import { AppError, assertFound } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
 import {
+  generateInviteToken,
   generateReceiptToken,
   hashFingerprint,
   hashIp,
@@ -232,6 +233,21 @@ export async function submitSession(sessionId: string, receiptToken: string) {
   const missing = gameQuestions.filter((gq) => !answeredIds.has(gq.questionId));
   // Auto-mark unanswered as skipped so partial play is allowed without forcing disclosure
   await prisma.$transaction(async (tx) => {
+    const submittedAt = new Date();
+    const consumed = await tx.game.updateMany({
+      where: { id: session.gameId, status: GameStatus.ACTIVE },
+      data: {
+        // Change the stored hash so the public invite token can never resolve again.
+        inviteTokenHash: hashToken(generateInviteToken()),
+        inviteTokenHint: 'used',
+        status: GameStatus.DISABLED,
+        disabledAt: submittedAt,
+      },
+    });
+    if (consumed.count !== 1) {
+      throw new AppError(410, 'This invitation has already been used or closed', 'INVITE_USED');
+    }
+
     for (const miss of missing) {
       await tx.response.create({
         data: {
@@ -247,8 +263,17 @@ export async function submitSession(sessionId: string, receiptToken: string) {
       where: { id: session.id },
       data: {
         status: SessionStatus.SUBMITTED,
-        submittedAt: new Date(),
+        submittedAt,
       },
+    });
+
+    await tx.respondentSession.updateMany({
+      where: {
+        gameId: session.gameId,
+        id: { not: session.id },
+        status: { notIn: [SessionStatus.SUBMITTED, SessionStatus.DELETED] },
+      },
+      data: { status: SessionStatus.DELETED, deletedAt: submittedAt },
     });
 
     const game = await tx.game.findUnique({ where: { id: session.gameId } });
