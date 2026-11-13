@@ -96,7 +96,10 @@ export async function createGame(creatorId: string, input: z.infer<typeof create
       let questionId: string | null = null;
       if (draft.sourceId && !usedQuestionIds.has(draft.sourceId)) {
         const source = await tx.question.findUnique({ where: { id: draft.sourceId } });
-        if (source && source.prompt === draft.prompt && source.round === draft.round) {
+        // The creator may edit or paraphrase a built-in prompt. Keep its
+        // category when the catalog source still belongs to the same round;
+        // GameQuestion.prompt stores the creator's exact wording per invite.
+        if (source && !source.creatorId && source.round === draft.round) {
           questionId = source.id;
         }
       }

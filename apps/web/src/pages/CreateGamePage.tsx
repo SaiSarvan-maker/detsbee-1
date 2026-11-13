@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 
@@ -10,7 +10,7 @@ type Catalog = {
     name: string;
     description: string;
     round: Round;
-    questions: Array<{ id: string; prompt: string }>;
+    questions: Array<{ id: string; slug?: string; prompt: string }>;
   }>;
 };
 
@@ -21,6 +21,98 @@ type Draft = {
   round: Round;
 };
 
+const questionVariants: Record<string, string[]> = {
+  'fav-food': ['Which food can always lift your mood?', 'What meal or snack feels like a small happiness?'],
+  'fav-colour': ['Which colour do you find yourself drawn to?', 'What colour feels most like you?'],
+  'fav-movie': ['Which film would you happily watch again?', 'What movie never gets old for you?'],
+  'fav-song': ['What song matches your mood lately?', 'Which song feels especially close to you right now?'],
+  'fav-artist': ['Which musician or band do you keep coming back to?', 'Who is an artist you especially enjoy?'],
+  'fav-book': ['Which book has stuck with you over time?', 'What book left a lasting impression on you?'],
+  hobbies: ['What do you enjoy doing in your free time?', 'Which hobbies make you feel most at home?'],
+  entertainment: ['What do you reach for when you want to unwind?', 'How do you like to relax after a busy day?'],
+  creative: ['What creative things do you like making or trying?', 'Are there any creative pursuits you enjoy?'],
+  'ideal-weekend': ['What would a really good weekend look like for you?', 'Describe a weekend that would leave you feeling happy.'],
+  'favourite-season': ['Which season do you enjoy most, and why?', 'What time of year feels best to you?'],
+  environment: ['Where do you feel most comfortable spending time?', 'What kind of place helps you feel at ease?'],
+  travel: ['What kind of trip would you love to take?', 'If you could plan a getaway, what would its vibe be?'],
+  chrono: ['When do you feel most energetic: morning or night?', 'What part of the day suits you best?'],
+  'happy-things': ['What little everyday thing tends to brighten your day?', 'What small moment reliably makes you smile?'],
+  'dream-experience': ['What experience would you still love to have one day?', 'Is there an adventure or experience on your wish list?'],
+  appreciate: ['What ordinary thing in life do you feel grateful for?', 'What everyday detail do you find yourself appreciating?'],
+  'first-impression': ['What stood out when you first met {name}?', 'How did {name} come across to you at first?'],
+  'three-words': ['Which three words best capture {name}?', 'What three words would you use for {name}?'],
+  personality: ['How would you describe what {name} is like?', 'What stands out to you about {name}’s personality?'],
+  'strongest-quality': ['Which quality do you admire most in {name}?', 'What do you see as {name}’s greatest strength?'],
+  interesting: ['What do you find especially interesting about {name}?', 'What makes {name} memorable to you?'],
+  'appreciate-them': ['What is something about {name} that you value?', 'What is one thing you especially appreciate about {name}?'],
+  'energy-scale': ['How warm does {name}’s presence feel to you?', 'How would you describe the warmth {name} brings to a room?'],
+  'environment-guess': ['Where do you imagine {name} feels most at ease?', 'What kind of place do you think {name} enjoys?'],
+  'should-know': ['What is something you hope {name} recognizes about themselves?', 'What would you like {name} to remember about who they are?'],
+  'friendship-note': ['What kind message would you like to leave for {name}?', 'If you could share one thoughtful note with {name}, what would it be?'],
+};
+
+const questionSetHistoryKey = 'detsbee_question_set_history';
+
+function shuffled<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function starterDrafts(categories: Catalog['categories']): Draft[] {
+  const previousSets: string[] = (() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(questionSetHistoryKey) || '[]');
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  let next: Draft[] = [];
+  let signature = '';
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    next = (['ABOUT_ME', 'HOW_I_SEE_YOU'] as const).flatMap((round) => {
+      const groups = shuffled(
+        categories
+          .filter((category) => category.round === round)
+          .map((category) => shuffled(category.questions)),
+      );
+      const selected: Catalog['categories'][number]['questions'][number][] = [];
+      // Select across categories before taking a second question from any one category.
+      while (selected.length < 5 && groups.some((group) => group.length > 0)) {
+        for (const group of groups) {
+          if (group.length && selected.length < 5) selected.push(group.pop()!);
+        }
+      }
+      return shuffled(selected).map((question) => {
+        const variants = question.slug ? questionVariants[question.slug] : undefined;
+        const prompt = variants?.length && Math.random() < 0.7
+          ? variants[Math.floor(Math.random() * variants.length)]
+          : question.prompt;
+        return {
+          key: crypto.randomUUID(),
+          sourceId: question.id,
+          prompt,
+          round,
+        };
+      });
+    });
+    signature = next.map((draft) => `${draft.sourceId}:${draft.prompt}`).sort().join('|');
+    if (!previousSets.includes(signature)) break;
+  }
+
+  try {
+    localStorage.setItem(questionSetHistoryKey, JSON.stringify([...previousSets.slice(-29), signature]));
+  } catch {
+    // The varied set still works when browser storage is unavailable.
+  }
+  return next;
+}
+
 export function CreateGamePage() {
   const navigate = useNavigate();
   const [catalog, setCatalog] = useState<Catalog | null>(null);
@@ -30,19 +122,25 @@ export function CreateGamePage() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const pendingFocusKey = useRef<string | null>(null);
 
   useEffect(() => {
     api<Catalog>('/api/games/catalog').then((data) => {
       setCatalog(data);
-      const next: Draft[] = [];
-      for (const cat of data.categories) {
-        for (const q of cat.questions.slice(0, 3)) {
-          next.push({ key: q.id, sourceId: q.id, prompt: q.prompt, round: cat.round });
-        }
-      }
-      setDrafts(next);
+      setDrafts(starterDrafts(data.categories));
     });
   }, []);
+
+  useEffect(() => {
+    const key = pendingFocusKey.current;
+    if (!key) return;
+    const field = document.getElementById(`question-${key}`) as HTMLTextAreaElement | null;
+    if (field) {
+      field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      field.focus();
+      pendingFocusKey.current = null;
+    }
+  }, [drafts]);
 
   const counts = useMemo(
     () => ({
@@ -61,7 +159,14 @@ export function CreateGamePage() {
   }
 
   function addBlank(round: Round) {
-    setDrafts((prev) => [...prev, { key: crypto.randomUUID(), prompt: '', round }]);
+    const key = crypto.randomUUID();
+    pendingFocusKey.current = key;
+    setDrafts((prev) => {
+      const lastInRound = prev.reduce((last, draft, index) => draft.round === round ? index : last, -1);
+      const next = [...prev];
+      next.splice(lastInRound + 1, 0, { key, prompt: '', round });
+      return next;
+    });
   }
 
   function addSuggestion(id: string, prompt: string, round: Round) {
@@ -150,6 +255,7 @@ export function CreateGamePage() {
               </button>
             </div>
             <textarea
+              id={`question-${draft.key}`}
               className="db-input min-h-20"
               value={draft.prompt}
               onChange={(e) => updatePrompt(draft.key, e.target.value)}
