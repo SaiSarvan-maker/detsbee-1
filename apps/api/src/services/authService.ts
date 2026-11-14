@@ -1,8 +1,10 @@
 import bcrypt from 'bcryptjs';
+import nodemailer from 'nodemailer';
 import { z } from 'zod';
 import { AppError } from '../lib/errors.js';
+import { env } from '../lib/env.js';
 import { prisma } from '../lib/prisma.js';
-import { generateVerifyToken } from '../lib/tokens.js';
+import { generateVerifyToken, hashToken } from '../lib/tokens.js';
 import { signToken, type AuthUser } from '../middleware/auth.js';
 
 export const registerSchema = z.object({
@@ -16,6 +18,42 @@ export const loginSchema = z.object({
   email: z.string().trim().email().toLowerCase(),
   password: z.string().min(1),
 });
+
+const emailSchema = z.string().trim().email().max(160).toLowerCase();
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(8).max(128),
+});
+
+const resetRequestedMessage = 'If an account exists for that email, a password reset link will be sent.';
+
+async function sendPasswordResetEmail(email: string, resetUrl: string) {
+  if (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD) {
+    throw new AppError(503, 'Password recovery email is not configured yet.', 'EMAIL_NOT_CONFIGURED');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: env.GMAIL_USER,
+      // Google may display app passwords grouped with spaces; SMTP expects the compact value.
+      pass: env.GMAIL_APP_PASSWORD.replace(/\s/g, ''),
+    },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
+  });
+
+  await transporter.sendMail({
+    from: `Detsbee <${env.GMAIL_USER}>`,
+    to: email,
+    subject: 'Reset your Detsbee password',
+    text: `Use this link to reset your Detsbee password. It expires in 30 minutes.\n\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
+    html: `<p>Use the link below to reset your Detsbee password. It expires in 30 minutes.</p><p><a href="${resetUrl}">Reset password</a></p><p>If you did not request this, you can ignore this email.</p>`,
+  });
+}
 
 function toAuthUser(user: { id: string; email: string; displayName: string }): AuthUser {
   return { id: user.id, email: user.email, displayName: user.displayName };
@@ -60,6 +98,75 @@ export async function login(input: z.infer<typeof loginSchema>) {
 
   const authUser = toAuthUser(user);
   return { user: authUser, token: signToken(authUser) };
+}
+
+export async function requestPasswordReset(input: unknown) {
+  const email = emailSchema.parse(input);
+  if (env.NODE_ENV === 'production' && (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD)) {
+    throw new AppError(503, 'Password recovery email is not configured yet.', 'EMAIL_NOT_CONFIGURED');
+  }
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) return { message: resetRequestedMessage };
+
+  const token = generateVerifyToken();
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordResetTokenHash: tokenHash, passwordResetExpiresAt: expiresAt },
+  });
+
+  const resetUrl = new URL('/reset-password', env.CLIENT_ORIGIN);
+  resetUrl.searchParams.set('token', token);
+
+  if (env.NODE_ENV !== 'production') {
+    return { message: resetRequestedMessage, developmentResetUrl: resetUrl.toString() };
+  }
+
+  try {
+    await sendPasswordResetEmail(email, resetUrl.toString());
+  } catch (error) {
+    await prisma.user.updateMany({
+      where: { id: user.id, passwordResetTokenHash: tokenHash },
+      data: { passwordResetTokenHash: null, passwordResetExpiresAt: null },
+    }).catch(() => undefined);
+    if (error instanceof AppError) throw error;
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
+    console.error(`[auth-email] Gmail SMTP delivery failed (${code})`);
+    // Keep the response indistinguishable from the unknown-email response.
+    return { message: resetRequestedMessage };
+  }
+
+  return { message: resetRequestedMessage };
+}
+
+export async function resetPassword(input: unknown) {
+  const data = resetPasswordSchema.parse(input);
+  const tokenHash = hashToken(data.token);
+  const user = await prisma.user.findUnique({ where: { passwordResetTokenHash: tokenHash } });
+  const now = new Date();
+  if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt <= now) {
+    throw new AppError(400, 'This password reset link is invalid or has expired.', 'RESET_LINK_INVALID');
+  }
+
+  const passwordHash = await bcrypt.hash(data.password, 12);
+  const updated = await prisma.user.updateMany({
+    where: {
+      id: user.id,
+      passwordResetTokenHash: tokenHash,
+      passwordResetExpiresAt: { gt: now },
+    },
+    data: {
+      passwordHash,
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
+    },
+  });
+  if (updated.count !== 1) {
+    throw new AppError(400, 'This password reset link is invalid or has expired.', 'RESET_LINK_INVALID');
+  }
+
+  return { ok: true };
 }
 
 export async function getProfile(userId: string) {

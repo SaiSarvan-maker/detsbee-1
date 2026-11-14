@@ -1,9 +1,16 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { env } from '../lib/env.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as authService from '../services/authService.js';
 
 export const authRouter = Router();
+const passwordRecoveryLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function setAuthCookie(res: import('express').Response, token: string) {
   res.cookie('detsbee_token', token, {
@@ -29,6 +36,22 @@ authRouter.post('/login', async (req, res, next) => {
     const result = await authService.login(req.body);
     setAuthCookie(res, result.token);
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/forgot-password', passwordRecoveryLimiter, async (req, res, next) => {
+  try {
+    res.json(await authService.requestPasswordReset(req.body?.email));
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/reset-password', passwordRecoveryLimiter, async (req, res, next) => {
+  try {
+    res.json(await authService.resetPassword(req.body));
   } catch (err) {
     next(err);
   }

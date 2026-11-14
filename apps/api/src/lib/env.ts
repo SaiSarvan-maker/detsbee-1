@@ -26,6 +26,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DEMO_MODE: z.string().default('false'),
   TOKEN_PEPPER: z.string().min(32),
+  GMAIL_USER: z.string().email().optional(),
+  GMAIL_APP_PASSWORD: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

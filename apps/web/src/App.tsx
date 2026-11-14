@@ -1,7 +1,7 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { AuthProvider, useAuth } from './lib/auth';
-import { LoginPage, RegisterPage } from './pages/AuthPages';
+import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from './pages/AuthPages';
 import { CreateGamePage } from './pages/CreateGamePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { GameDetailPage } from './pages/GameDetailPage';
@@ -28,6 +28,8 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/play/:token" element={<PlayPage />} />
         <Route path="/receipt/:token" element={<ReceiptPage />} />
         <Route element={<Protected />}>

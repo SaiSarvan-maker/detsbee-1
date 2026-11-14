@@ -54,6 +54,8 @@ model User {
   phone         String?
   emailVerified Boolean   @default(false)
   verifyToken   String?
+  passwordResetTokenHash String? @unique
+  passwordResetExpiresAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   games             Game[]
