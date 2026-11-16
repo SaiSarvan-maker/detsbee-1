@@ -20,7 +20,7 @@ export function createApp() {
       origin(origin, callback) {
         if (!origin) return callback(null, true);
         const allowed = new Set(
-          [env.CLIENT_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'].filter(Boolean),
+          [env.CLIENT_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173', 'https://localhost'].filter(Boolean),
         );
         if (process.env.VERCEL_URL) allowed.add(`https://${process.env.VERCEL_URL}`);
         if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
