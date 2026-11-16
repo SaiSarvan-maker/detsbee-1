@@ -1,4 +1,5 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { AndroidStartupExperience } from './components/AndroidStartupExperience';
 import { AppShell } from './components/layout/AppShell';
 import { AuthProvider, useAuth } from './lib/auth';
 import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from './pages/AuthPages';
@@ -42,6 +43,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <AndroidStartupExperience />
     </AuthProvider>
   );
 }

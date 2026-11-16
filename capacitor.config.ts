@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.detsbee.app',
-  appName: 'detsbee',
+  appName: 'Detsbee',
   webDir: 'apps/web/dist'
 };
 
