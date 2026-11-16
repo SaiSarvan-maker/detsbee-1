@@ -2,6 +2,7 @@ import { GameStatus } from '@prisma/client';
 import { customAlphabet } from 'nanoid';
 import { z } from 'zod';
 import { AppError, assertFound } from '../lib/errors.js';
+import { env } from '../lib/env.js';
 import { prisma } from '../lib/prisma.js';
 import { generateInviteToken, hashToken, tokenHint } from '../lib/tokens.js';
 
@@ -27,7 +28,7 @@ export const createGameSchema = z
   });
 
 function publicInviteUrl(token: string) {
-  const origin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+  const origin = (env.VITE_APP_URL || env.CLIENT_ORIGIN).replace(/\/+$/, '');
   return `${origin}/play/${token}`;
 }
 

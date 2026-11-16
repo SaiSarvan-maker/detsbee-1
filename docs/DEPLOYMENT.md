@@ -6,6 +6,8 @@ The root `vercel.json` deploys the Vite app as static output and routes `/api/*`
 
 Before deploying, change the datasource provider in `apps/api/prisma/schema.prisma` from `sqlite` to `postgresql` as shown below, then provision PostgreSQL and set `DATABASE_URL`, `JWT_SECRET` (at least 32 characters), and `TOKEN_PEPPER` (at least 32 characters) in Vercel Project Settings. Set `NODE_ENV=production`, `DEMO_MODE=false`, `COOKIE_SECURE=true`, and `CLIENT_ORIGIN` to the production web origin. Apply the Prisma schema to the hosted database with `npx prisma db push --schema=apps/api/prisma/schema.prisma` as a one-time setup, then seed only if desired using the controlled seed procedure below. Production startup now rejects SQLite and no longer falls back to development secrets.
 
+Set `VITE_APP_URL=https://detsbee-1.vercel.app` in the Vercel Production environment. This public base URL is used to build invitation links in the web app, Android WebView, and API responses. Set the same variable when building the Android app; if omitted, the frontend falls back to the production URL.
+
 Password recovery sends a one-time, 30-minute link through Gmail SMTP. Enable 2-Step Verification on a dedicated Gmail sender account, create an App Password, then add `GMAIL_USER` and `GMAIL_APP_PASSWORD` to the Vercel Production environment. Do not use your normal Gmail password. After schema changes, run `npx prisma db push --schema=apps/api/prisma/schema.prisma` against the hosted database before deploying the code that uses the new columns.
 
 Do not use SQLite on Vercel: function filesystems are ephemeral and cannot provide durable shared state across invocations.

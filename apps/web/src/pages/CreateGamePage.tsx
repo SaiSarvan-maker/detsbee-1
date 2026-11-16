@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { buildInviteUrl } from '../lib/appUrl';
 
 type Round = 'ABOUT_ME' | 'HOW_I_SEE_YOU';
 
@@ -188,7 +189,7 @@ export function CreateGamePage() {
         method: 'POST',
         body: JSON.stringify({ title, message, expiresInDays, questions }),
       });
-      const link = `${window.location.origin}/play/${created.inviteToken}`;
+      const link = buildInviteUrl(created.inviteToken);
       sessionStorage.setItem(`detsbee_invite_${created.id}`, link);
       await navigator.clipboard?.writeText(link).catch(() => undefined);
       navigate(`/app/games/${created.id}?created=1`);

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Copy, Link2Off, RefreshCw, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
+import { buildInviteUrl, canonicalizeInviteUrl } from '../lib/appUrl';
 
 type GameDetail = {
   id: string;
@@ -58,7 +59,13 @@ export function GameDetailPage() {
   useEffect(() => {
     const cached = sessionStorage.getItem(`detsbee_invite_${gameId}`);
     if (cached) {
-      setInviteUrl(cached);
+      const canonical = canonicalizeInviteUrl(cached);
+      if (canonical) {
+        sessionStorage.setItem(`detsbee_invite_${gameId}`, canonical);
+        setInviteUrl(canonical);
+      } else {
+        sessionStorage.removeItem(`detsbee_invite_${gameId}`);
+      }
       setMessage('Discovery ready. Copy your invitation link below — it is shown only while available in this browser session.');
     }
     load().catch((err) => setError(err.message || 'Failed to load game'));
@@ -68,17 +75,23 @@ export function GameDetailPage() {
     try {
       const cached = sessionStorage.getItem(`detsbee_invite_${gameId}`);
       if (cached && !forceRotate && game?.inviteHint !== 'used') {
-        setInviteUrl(cached);
-        await navigator.clipboard?.writeText(cached).catch(() => undefined);
-        setMessage('Invitation link copied.');
-        return;
+        const canonical = canonicalizeInviteUrl(cached);
+        if (canonical) {
+          sessionStorage.setItem(`detsbee_invite_${gameId}`, canonical);
+          setInviteUrl(canonical);
+          await navigator.clipboard?.writeText(canonical).catch(() => undefined);
+          setMessage('Invitation link copied.');
+          return;
+        }
+        sessionStorage.removeItem(`detsbee_invite_${gameId}`);
       }
-      const data = await api<{ inviteUrl: string }>(`/api/games/${gameId}/rotate-link`, {
+      const data = await api<{ inviteToken: string }>(`/api/games/${gameId}/rotate-link`, {
         method: 'POST',
       });
-      sessionStorage.setItem(`detsbee_invite_${gameId}`, data.inviteUrl);
-      setInviteUrl(data.inviteUrl);
-      await navigator.clipboard?.writeText(data.inviteUrl).catch(() => undefined);
+      const canonical = buildInviteUrl(data.inviteToken);
+      sessionStorage.setItem(`detsbee_invite_${gameId}`, canonical);
+      setInviteUrl(canonical);
+      await navigator.clipboard?.writeText(canonical).catch(() => undefined);
       setMessage(
         forceRotate || game?.inviteHint === 'used'
           ? 'Fresh one-time invitation link copied. Older links no longer work.'

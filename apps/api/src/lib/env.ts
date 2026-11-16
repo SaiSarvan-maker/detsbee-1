@@ -22,6 +22,7 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
   COOKIE_SECURE: z.string().default('false'),
   CLIENT_ORIGIN: z.string().default('http://localhost:5173'),
+  VITE_APP_URL: z.string().url().optional(),
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DEMO_MODE: z.string().default('false'),
