@@ -2,7 +2,7 @@ import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { AndroidStartupExperience } from './components/AndroidStartupExperience';
 import { AppShell } from './components/layout/AppShell';
 import { AuthProvider, useAuth } from './lib/auth';
-import { ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from './pages/AuthPages';
+import { EmailVerificationPage, ForgotPasswordPage, LoginPage, RegisterPage, ResetPasswordPage } from './pages/AuthPages';
 import { CreateGamePage } from './pages/CreateGamePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { GameDetailPage } from './pages/GameDetailPage';
@@ -29,6 +29,7 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/verify-email" element={<EmailVerificationPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/play/:token" element={<PlayPage />} />

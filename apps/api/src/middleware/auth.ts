@@ -18,10 +18,10 @@ declare global {
   }
 }
 
-type JwtPayload = { sub: string; email: string };
+type JwtPayload = { sub: string; email: string; ver?: number };
 
-export function signToken(user: AuthUser): string {
-  return jwt.sign({ email: user.email }, env.JWT_SECRET, {
+export function signToken(user: AuthUser, authVersion = 0): string {
+  return jwt.sign({ email: user.email, ver: authVersion }, env.JWT_SECRET, {
     subject: user.id,
     expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
   });
@@ -38,6 +38,12 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
     const user = await prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user) throw new AppError(401, 'Invalid session', 'UNAUTHORIZED');
+    if ((payload.ver ?? 0) !== user.authVersion) {
+      throw new AppError(401, 'Session expired; please sign in again', 'SESSION_REVOKED');
+    }
+    if (!user.emailVerified) {
+      throw new AppError(403, 'Verify your email before using Detsbee.', 'EMAIL_NOT_VERIFIED');
+    }
 
     req.user = { id: user.id, email: user.email, displayName: user.displayName };
     next();
@@ -59,7 +65,9 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
     prisma.user
       .findUnique({ where: { id: payload.sub } })
       .then((user) => {
-        if (user) req.user = { id: user.id, email: user.email, displayName: user.displayName };
+        if (user && user.emailVerified && (payload.ver ?? 0) === user.authVersion) {
+          req.user = { id: user.id, email: user.email, displayName: user.displayName };
+        }
         next();
       })
       .catch(() => next());

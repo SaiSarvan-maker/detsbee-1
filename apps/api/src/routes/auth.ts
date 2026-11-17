@@ -24,8 +24,23 @@ function setAuthCookie(res: import('express').Response, token: string) {
 authRouter.post('/register', async (req, res, next) => {
   try {
     const result = await authService.register(req.body);
-    setAuthCookie(res, result.token);
     res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/request-verification', passwordRecoveryLimiter, async (req, res, next) => {
+  try {
+    res.json(await authService.requestEmailVerification(req.body?.email));
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/verify-email', passwordRecoveryLimiter, async (req, res, next) => {
+  try {
+    res.json(await authService.verifyEmail(req.body?.token));
   } catch (err) {
     next(err);
   }

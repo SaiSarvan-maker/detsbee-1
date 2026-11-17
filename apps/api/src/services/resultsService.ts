@@ -1,6 +1,7 @@
 import { GameStatus, Visibility } from '@prisma/client';
 import { AppError, assertFound } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
+import { isSessionExpired } from '../lib/retention.js';
 
 function asText(value: unknown): string {
   if (value == null) return '';
@@ -25,6 +26,7 @@ export async function getCreatorResults(creatorId: string, gameId: string, sessi
       where: {
         gameId: game.id,
         status: 'SUBMITTED',
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         ...(sessionId ? { id: sessionId } : {}),
       },
       include: {
@@ -40,6 +42,8 @@ export async function getCreatorResults(creatorId: string, gameId: string, sessi
       orderBy: { sortOrder: 'asc' },
     }),
   ]);
+
+  const visibleSessions = sessions.filter((session) => !isSessionExpired(session));
 
   // Hard guarantee: never load private responses for creator paths
   const leaked = await prisma.response.count({
@@ -57,7 +61,7 @@ export async function getCreatorResults(creatorId: string, gameId: string, sessi
   );
   const orderByQuestion = new Map(gameQuestions.map((gq, index) => [gq.questionId, index]));
 
-  const people = sessions.map((session) => {
+  const people = visibleSessions.map((session) => {
     const respondent = session.displayName || 'Anonymous bee';
     const answers = [...session.responses]
       .sort(

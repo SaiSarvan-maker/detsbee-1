@@ -54,6 +54,8 @@ model User {
   phone         String?
   emailVerified Boolean   @default(false)
   verifyToken   String?
+  verifyTokenExpiresAt DateTime?
+  authVersion   Int       @default(0)
   passwordResetTokenHash String? @unique
   passwordResetExpiresAt DateTime?
   createdAt     DateTime  @default(now())

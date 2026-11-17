@@ -27,5 +27,12 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.6.2"
+  },
+  "overrides": {
+    "prisma": {
+      "@prisma/config": {
+        "deepmerge-ts": "8.0.2"
+      }
+    }
   }
 }

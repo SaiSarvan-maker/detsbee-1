@@ -2,6 +2,7 @@ import { GameStatus, SessionStatus, Visibility } from '@prisma/client';
 import { z } from 'zod';
 import { AppError, assertFound } from '../lib/errors.js';
 import { prisma } from '../lib/prisma.js';
+import { getSessionExpiry, isSessionExpired } from '../lib/retention.js';
 import {
   generateInviteToken,
   generateReceiptToken,
@@ -30,17 +31,19 @@ export async function startSession(input: {
 }) {
   const invite = await resolveInvite(input.inviteToken);
   const receiptRaw = generateReceiptToken();
+  const startedAt = new Date();
 
   const session = await prisma.respondentSession.create({
     data: {
       gameId: invite.gameId,
       displayName: input.displayName?.trim() || null,
       status: SessionStatus.STARTED,
+      startedAt,
       receiptTokenHash: hashToken(receiptRaw),
       receiptTokenHint: tokenHint(receiptRaw),
       fingerprintHash: input.fingerprint ? hashFingerprint(input.fingerprint) : null,
       retentionDays: invite.retentionDays,
-      expiresAt: new Date(Date.now() + invite.retentionDays * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(startedAt.getTime() + invite.retentionDays * 24 * 60 * 60 * 1000),
     },
   });
 
@@ -311,6 +314,10 @@ export async function getReceipt(receiptToken: string) {
     }),
   );
 
+  const expiresAt = getSessionExpiry(session);
+  if (isSessionExpired(session)) {
+    throw new AppError(410, 'This receipt has expired', 'RECEIPT_EXPIRED');
+  }
   if (session.status === SessionStatus.DELETED || session.deletedAt) {
     throw new AppError(410, 'This receipt was deleted', 'RECEIPT_DELETED');
   }
@@ -324,7 +331,7 @@ export async function getReceipt(receiptToken: string) {
     title: session.game.title,
     submittedAt: session.submittedAt,
     retentionDays: session.retentionDays,
-    expiresAt: session.expiresAt,
+    expiresAt,
     answers: session.responses.map((r) => ({
       questionId: r.questionId,
       prompt: (
@@ -368,6 +375,9 @@ async function requireSession(sessionId: string, receiptToken: string) {
   );
   if (session.receiptTokenHash !== hashToken(receiptToken)) {
     throw new AppError(403, 'Invalid receipt token', 'FORBIDDEN');
+  }
+  if (isSessionExpired(session)) {
+    throw new AppError(410, 'Session expired', 'SESSION_EXPIRED');
   }
   if (session.status === SessionStatus.DELETED || session.deletedAt) {
     throw new AppError(410, 'Session deleted', 'SESSION_DELETED');
