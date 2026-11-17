@@ -27,6 +27,13 @@ const resetPasswordSchema = z.object({
 
 const resetRequestedMessage = 'If an account exists for that email, a password reset link will be sent.';
 
+function logVerificationDeliveryFailure(error: unknown) {
+  const details = error && typeof error === 'object' ? error as { code?: unknown; responseCode?: unknown } : {};
+  const code = typeof details.code === 'string' ? details.code : 'UNKNOWN';
+  const responseCode = typeof details.responseCode === 'number' ? details.responseCode : undefined;
+  console.error('[auth-email] Verification delivery failed', JSON.stringify({ code, responseCode }));
+}
+
 function createMailTransporter() {
   if (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD) {
     throw new AppError(503, 'Password recovery email is not configured yet.', 'EMAIL_NOT_CONFIGURED');
@@ -115,8 +122,7 @@ export async function register(input: z.infer<typeof registerSchema>) {
     await sendEmailVerification(data.email, verificationUrl.toString());
     return { user: toAuthUser(user), emailVerificationRequired: true, emailSent: true };
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
-    console.error(`[auth-email] Verification delivery failed (${code})`);
+    logVerificationDeliveryFailure(error);
     return { user: toAuthUser(user), emailVerificationRequired: true, emailSent: false };
   }
 }
@@ -150,8 +156,7 @@ export async function requestEmailVerification(input: unknown) {
   try {
     await sendEmailVerification(email, verificationUrl.toString());
   } catch (error) {
-    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'UNKNOWN';
-    console.error(`[auth-email] Verification delivery failed (${code})`);
+    logVerificationDeliveryFailure(error);
   }
   return { message };
 }

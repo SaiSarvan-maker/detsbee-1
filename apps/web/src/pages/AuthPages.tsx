@@ -148,7 +148,8 @@ export function RegisterPage() {
         const verificationUrl = new URL(result.developmentVerificationUrl);
         navigate(`${verificationUrl.pathname}${verificationUrl.search}`);
       } else {
-        navigate(`/verify-email?email=${encodeURIComponent(email)}`);
+        const deliveryState = result.emailSent === false ? '&delivery=retry' : '';
+        navigate(`/verify-email?email=${encodeURIComponent(email)}${deliveryState}`);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to register');
@@ -202,6 +203,12 @@ export function RegisterPage() {
         </button>
       </form>
       <p className="mt-4 text-sm text-ink-600">
+        Already registered but no verification email?{' '}
+        <Link to={`/verify-email?email=${encodeURIComponent(email)}`} className="font-semibold text-honey-700 underline">
+          Request another email
+        </Link>
+      </p>
+      <p className="mt-4 text-sm text-ink-600">
         Already have an account? <Link to="/login" className="font-semibold text-honey-700">Sign in</Link>
       </p>
     </AuthFrame>
@@ -211,6 +218,7 @@ export function RegisterPage() {
 export function EmailVerificationPage() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') || '';
+  const deliveryNeedsRetry = searchParams.get('delivery') === 'retry';
   const [email, setEmail] = useState(searchParams.get('email') || '');
   const [status, setStatus] = useState(token ? 'checking' : 'pending');
   const [message, setMessage] = useState('');
@@ -253,7 +261,7 @@ export function EmailVerificationPage() {
   return (
     <AuthFrame
       title={status === 'verified' ? 'Email verified' : 'Verify your email'}
-      subtitle={status === 'verified' ? 'Your Detsbee account is ready.' : 'Check your inbox for a one-time link. Verification links expire after 24 hours.'}
+      subtitle={status === 'verified' ? 'Your Detsbee account is ready.' : 'Verification links expire after 24 hours. If the email is missing, request another below.'}
     >
       {status === 'verified' ? (
         <Link to="/login" className="db-btn db-btn-primary w-full">Continue to sign in</Link>
@@ -261,6 +269,11 @@ export function EmailVerificationPage() {
         <p role="status" className="text-sm text-ink-600">Verifying your email…</p>
       ) : (
         <form className="space-y-4" onSubmit={resend}>
+          {deliveryNeedsRetry && (
+            <p role="alert" className="text-sm text-amber-800">
+              Your account was created, but Detsbee could not confirm that the verification email was sent. Check the address and request another email below.
+            </p>
+          )}
           {status === 'invalid' && error && <p role="alert" className="text-sm text-red-700">{error}</p>}
           <label className="block text-sm font-semibold">
             Email
