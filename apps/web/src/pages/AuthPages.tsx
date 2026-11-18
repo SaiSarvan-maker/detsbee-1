@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentPropsWithoutRef, type FormEvent, type ReactNode } from 'react';
+import { useState, type ComponentPropsWithoutRef, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { SiteHeader } from '../components/layout/SiteHeader';
 import { api, ApiError } from '../lib/api';
@@ -62,7 +62,6 @@ export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [needsVerification, setNeedsVerification] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!loading && user) return <Navigate to="/app" replace />;
@@ -71,13 +70,11 @@ export function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setError('');
-    setNeedsVerification(false);
     try {
       await login(email, password);
       navigate('/app');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to sign in');
-      setNeedsVerification(err instanceof ApiError && err.code === 'EMAIL_NOT_VERIFIED');
     } finally {
       setBusy(false);
     }
@@ -110,11 +107,6 @@ export function LoginPage() {
           </Link>
         </p>
         {error && <p className="text-sm text-red-700">{error}</p>}
-        {needsVerification && (
-          <Link to={`/verify-email?email=${encodeURIComponent(email)}`} className="block text-sm font-semibold text-honey-700 underline">
-            Resend the verification email
-          </Link>
-        )}
         <button className="db-btn db-btn-primary w-full" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
@@ -143,14 +135,8 @@ export function RegisterPage() {
     setBusy(true);
     setError('');
     try {
-      const result = await register({ displayName, email, password, phone: phone || undefined });
-      if (result.developmentVerificationUrl) {
-        const verificationUrl = new URL(result.developmentVerificationUrl);
-        navigate(`${verificationUrl.pathname}${verificationUrl.search}`);
-      } else {
-        const deliveryState = result.emailSent === false ? '&delivery=retry' : '';
-        navigate(`/verify-email?email=${encodeURIComponent(email)}${deliveryState}`);
-      }
+      await register({ displayName, email, password, phone: phone || undefined });
+      navigate('/app');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to register');
     } finally {
@@ -203,103 +189,7 @@ export function RegisterPage() {
         </button>
       </form>
       <p className="mt-4 text-sm text-ink-600">
-        Already registered but no verification email?{' '}
-        <Link to={`/verify-email?email=${encodeURIComponent(email)}`} className="font-semibold text-honey-700 underline">
-          Request another email
-        </Link>
-      </p>
-      <p className="mt-4 text-sm text-ink-600">
         Already have an account? <Link to="/login" className="font-semibold text-honey-700">Sign in</Link>
-      </p>
-    </AuthFrame>
-  );
-}
-
-export function EmailVerificationPage() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token') || '';
-  const deliveryNeedsRetry = searchParams.get('delivery') === 'retry';
-  const [email, setEmail] = useState(searchParams.get('email') || '');
-  const [status, setStatus] = useState(token ? 'checking' : 'pending');
-  const [message, setMessage] = useState('');
-  const [developmentVerificationUrl, setDevelopmentVerificationUrl] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const verificationStarted = useRef(false);
-
-  useEffect(() => {
-    if (!token || verificationStarted.current) return;
-    verificationStarted.current = true;
-    void api('/api/auth/verify-email', { method: 'POST', body: JSON.stringify({ token }) })
-      .then(() => setStatus('verified'))
-      .catch((err: unknown) => {
-        setStatus('invalid');
-        setError(err instanceof ApiError ? err.message : 'Unable to verify this email');
-      });
-  }, [token]);
-
-  async function resend(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    setMessage('');
-    setDevelopmentVerificationUrl('');
-    try {
-      const result = await api<{ message: string; developmentVerificationUrl?: string }>(
-        '/api/auth/request-verification',
-        { method: 'POST', body: JSON.stringify({ email }) },
-      );
-      setMessage(result.message);
-      setDevelopmentVerificationUrl(result.developmentVerificationUrl || '');
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not request a verification email');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <AuthFrame
-      title={status === 'verified' ? 'Email verified' : 'Verify your email'}
-      subtitle={status === 'verified' ? 'Your Detsbee account is ready.' : 'Verification links expire after 24 hours. If the email is missing, request another below.'}
-    >
-      {status === 'verified' ? (
-        <Link to="/login" className="db-btn db-btn-primary w-full">Continue to sign in</Link>
-      ) : status === 'checking' ? (
-        <p role="status" className="text-sm text-ink-600">Verifying your email…</p>
-      ) : (
-        <form className="space-y-4" onSubmit={resend}>
-          {deliveryNeedsRetry && (
-            <p role="alert" className="text-sm text-amber-800">
-              Your account was created, but Detsbee could not confirm that the verification email was sent. Check the address and request another email below.
-            </p>
-          )}
-          {status === 'invalid' && error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-          <label className="block text-sm font-semibold">
-            Email
-            <input
-              className="db-input mt-1"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              autoComplete="email"
-            />
-          </label>
-          {error && status !== 'invalid' && <p role="alert" className="text-sm text-red-700">{error}</p>}
-          {message && <p role="status" className="text-sm text-green-800">{message}</p>}
-          {developmentVerificationUrl && (
-            <p className="break-all text-sm">
-              Development verification link: <Link className="font-semibold text-honey-700 underline" to={developmentVerificationUrl.replace(/^https?:\/\/[^/]+/, '')}>Verify email</Link>
-            </p>
-          )}
-          <button className="db-btn db-btn-primary w-full" disabled={busy}>
-            {busy ? 'Sending…' : 'Resend verification email'}
-          </button>
-        </form>
-      )}
-      <p className="mt-4 text-sm text-ink-600">
-        Already verified? <Link to="/login" className="font-semibold text-honey-700">Sign in</Link>
       </p>
     </AuthFrame>
   );

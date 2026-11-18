@@ -27,7 +27,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   DEMO_MODE: z.string().default('false'),
   TOKEN_PEPPER: z.string().min(32),
-  GMAIL_USER: z.string().email().optional(),
+  GMAIL_USER: z.string().optional(),
   GMAIL_APP_PASSWORD: z.string().optional(),
   CRON_SECRET: z.string().min(32).optional(),
 });
@@ -45,9 +45,6 @@ if (env.NODE_ENV === 'production') {
   }
   if (!env.CLIENT_ORIGIN.startsWith('https://')) {
     throw new Error('Production requires CLIENT_ORIGIN to be the public HTTPS web origin.');
-  }
-  if (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD) {
-    throw new Error('Production requires Gmail SMTP credentials for mandatory email verification and password recovery.');
   }
   if (!env.CRON_SECRET) {
     throw new Error('Production requires CRON_SECRET for scheduled response-retention cleanup.');

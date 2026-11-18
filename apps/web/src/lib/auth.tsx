@@ -14,7 +14,6 @@ export type User = {
   email: string;
   displayName: string;
   phone?: string | null;
-  emailVerified?: boolean;
 };
 
 type AuthContextValue = {
@@ -26,7 +25,7 @@ type AuthContextValue = {
     email: string;
     password: string;
     phone?: string;
-  }) => Promise<{ developmentVerificationUrl?: string; emailSent?: boolean }>;
+  }) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -64,11 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (input: { displayName: string; email: string; password: string; phone?: string }) => {
-      const data = await api<{ developmentVerificationUrl?: string; emailSent?: boolean }>('/api/auth/register', {
+      const data = await api<{ user: User; token: string }>('/api/auth/register', {
         method: 'POST',
         body: JSON.stringify(input),
       });
-      return data;
+      setToken(data.token);
+      setUser(data.user);
     },
     [],
   );

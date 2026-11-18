@@ -36,15 +36,14 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     if (!token) throw new AppError(401, 'Authentication required', 'UNAUTHORIZED');
 
     const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, email: true, displayName: true, authVersion: true },
+    });
     if (!user) throw new AppError(401, 'Invalid session', 'UNAUTHORIZED');
     if ((payload.ver ?? 0) !== user.authVersion) {
       throw new AppError(401, 'Session expired; please sign in again', 'SESSION_REVOKED');
     }
-    if (!user.emailVerified) {
-      throw new AppError(403, 'Verify your email before using Detsbee.', 'EMAIL_NOT_VERIFIED');
-    }
-
     req.user = { id: user.id, email: user.email, displayName: user.displayName };
     next();
   } catch (err) {
@@ -63,9 +62,12 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
   try {
     const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
     prisma.user
-      .findUnique({ where: { id: payload.sub } })
+      .findUnique({
+        where: { id: payload.sub },
+        select: { id: true, email: true, displayName: true, authVersion: true },
+      })
       .then((user) => {
-        if (user && user.emailVerified && (payload.ver ?? 0) === user.authVersion) {
+        if (user && (payload.ver ?? 0) === user.authVersion) {
           req.user = { id: user.id, email: user.email, displayName: user.displayName };
         }
         next();

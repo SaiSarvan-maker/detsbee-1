@@ -27,15 +27,8 @@ const resetPasswordSchema = z.object({
 
 const resetRequestedMessage = 'If an account exists for that email, a password reset link will be sent.';
 
-function logVerificationDeliveryFailure(error: unknown) {
-  const details = error && typeof error === 'object' ? error as { code?: unknown; responseCode?: unknown } : {};
-  const code = typeof details.code === 'string' ? details.code : 'UNKNOWN';
-  const responseCode = typeof details.responseCode === 'number' ? details.responseCode : undefined;
-  console.error('[auth-email] Verification delivery failed', JSON.stringify({ code, responseCode }));
-}
-
 function createMailTransporter() {
-  if (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD) {
+  if (!env.GMAIL_USER || !z.string().email().safeParse(env.GMAIL_USER).success || !env.GMAIL_APP_PASSWORD) {
     throw new AppError(503, 'Password recovery email is not configured yet.', 'EMAIL_NOT_CONFIGURED');
   }
 
@@ -64,40 +57,24 @@ async function sendPasswordResetEmail(email: string, resetUrl: string) {
   });
 }
 
-async function sendEmailVerification(email: string, verificationUrl: string) {
-  await createMailTransporter().sendMail({
-    from: `Detsbee <${env.GMAIL_USER}>`,
-    to: email,
-    subject: 'Verify your Detsbee email',
-    text: `Verify your email to activate your Detsbee account. This link can only be used once.\n\n${verificationUrl}\n\nIf you did not create this account, you can ignore this email.`,
-    html: `<p>Verify your email to activate your Detsbee account. This link can only be used once.</p><p><a href="${verificationUrl}">Verify email</a></p><p>If you did not create this account, you can ignore this email.</p>`,
-  });
-}
-
 function toAuthUser(user: { id: string; email: string; displayName: string }): AuthUser {
   return { id: user.id, email: user.email, displayName: user.displayName };
 }
 
 export async function register(input: z.infer<typeof registerSchema>) {
   const data = registerSchema.parse(input);
-  if (env.NODE_ENV === 'production' && (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD)) {
-    throw new AppError(503, 'Email verification is not configured yet.', 'EMAIL_NOT_CONFIGURED');
-  }
-  const existing = await prisma.user.findUnique({ where: { email: data.email } });
+  const existing = await prisma.user.findUnique({ where: { email: data.email }, select: { id: true } });
   if (existing) throw new AppError(409, 'An account with this email already exists', 'EMAIL_TAKEN');
 
   const passwordHash = await bcrypt.hash(data.password, 12);
-  const verificationToken = generateVerifyToken();
   const user = await prisma.user.create({
     data: {
       email: data.email,
       displayName: data.displayName,
       passwordHash,
       phone: data.phone || null,
-      emailVerified: false,
-      verifyToken: hashToken(verificationToken),
-      verifyTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     },
+    select: { id: true, email: true, displayName: true, authVersion: true },
   });
 
   await prisma.activity.create({
@@ -108,86 +85,20 @@ export async function register(input: z.infer<typeof registerSchema>) {
     },
   });
 
-  const verificationUrl = new URL('/verify-email', env.CLIENT_ORIGIN);
-  verificationUrl.searchParams.set('token', verificationToken);
-  if (env.NODE_ENV !== 'production') {
-    return {
-      user: toAuthUser(user),
-      emailVerificationRequired: true,
-      developmentVerificationUrl: verificationUrl.toString(),
-    };
-  }
-
-  try {
-    await sendEmailVerification(data.email, verificationUrl.toString());
-    return { user: toAuthUser(user), emailVerificationRequired: true, emailSent: true };
-  } catch (error) {
-    logVerificationDeliveryFailure(error);
-    return { user: toAuthUser(user), emailVerificationRequired: true, emailSent: false };
-  }
-}
-
-export async function requestEmailVerification(input: unknown) {
-  const email = emailSchema.parse(input);
-  const message = 'If an unverified account exists for that email, a verification link will be sent.';
-  if (env.NODE_ENV === 'production' && (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD)) {
-    throw new AppError(503, 'Email verification is not configured yet.', 'EMAIL_NOT_CONFIGURED');
-  }
-
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || user.emailVerified) return { message };
-
-  const token = generateVerifyToken();
-  const tokenHash = hashToken(token);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      verifyToken: tokenHash,
-      verifyTokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    },
-  });
-  const verificationUrl = new URL('/verify-email', env.CLIENT_ORIGIN);
-  verificationUrl.searchParams.set('token', token);
-
-  if (env.NODE_ENV !== 'production') {
-    return { message, developmentVerificationUrl: verificationUrl.toString() };
-  }
-
-  try {
-    await sendEmailVerification(email, verificationUrl.toString());
-  } catch (error) {
-    logVerificationDeliveryFailure(error);
-  }
-  return { message };
-}
-
-export async function verifyEmail(input: unknown) {
-  const token = z.string().min(1).parse(input);
-  const tokenHash = hashToken(token);
-  const result = await prisma.user.updateMany({
-    where: {
-      verifyToken: tokenHash,
-      emailVerified: false,
-      verifyTokenExpiresAt: { gt: new Date() },
-    },
-    data: { emailVerified: true, verifyToken: null, verifyTokenExpiresAt: null },
-  });
-  if (result.count !== 1) {
-    throw new AppError(400, 'This verification link is invalid or has already been used.', 'VERIFICATION_LINK_INVALID');
-  }
-  return { ok: true };
+  const authUser = toAuthUser(user);
+  return { user: authUser, token: signToken(authUser, user.authVersion) };
 }
 
 export async function login(input: z.infer<typeof loginSchema>) {
   const data = loginSchema.parse(input);
-  const user = await prisma.user.findUnique({ where: { email: data.email } });
+  const user = await prisma.user.findUnique({
+    where: { email: data.email },
+    select: { id: true, email: true, displayName: true, passwordHash: true, authVersion: true },
+  });
   if (!user) throw new AppError(401, 'Invalid email or password', 'INVALID_CREDENTIALS');
 
   const ok = await bcrypt.compare(data.password, user.passwordHash);
   if (!ok) throw new AppError(401, 'Invalid email or password', 'INVALID_CREDENTIALS');
-  if (!user.emailVerified) {
-    throw new AppError(403, 'Verify your email before signing in.', 'EMAIL_NOT_VERIFIED');
-  }
 
   const authUser = toAuthUser(user);
   return { user: authUser, token: signToken(authUser, user.authVersion) };
@@ -198,7 +109,7 @@ export async function requestPasswordReset(input: unknown) {
   if (env.NODE_ENV === 'production' && (!env.GMAIL_USER || !env.GMAIL_APP_PASSWORD)) {
     throw new AppError(503, 'Password recovery email is not configured yet.', 'EMAIL_NOT_CONFIGURED');
   }
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (!user) return { message: resetRequestedMessage };
 
   const token = generateVerifyToken();
@@ -207,6 +118,7 @@ export async function requestPasswordReset(input: unknown) {
   await prisma.user.update({
     where: { id: user.id },
     data: { passwordResetTokenHash: tokenHash, passwordResetExpiresAt: expiresAt },
+    select: { id: true },
   });
 
   const resetUrl = new URL('/reset-password', env.CLIENT_ORIGIN);
@@ -236,7 +148,10 @@ export async function requestPasswordReset(input: unknown) {
 export async function resetPassword(input: unknown) {
   const data = resetPasswordSchema.parse(input);
   const tokenHash = hashToken(data.token);
-  const user = await prisma.user.findUnique({ where: { passwordResetTokenHash: tokenHash } });
+  const user = await prisma.user.findUnique({
+    where: { passwordResetTokenHash: tokenHash },
+    select: { id: true, passwordResetExpiresAt: true },
+  });
   const now = new Date();
   if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt <= now) {
     throw new AppError(400, 'This password reset link is invalid or has expired.', 'RESET_LINK_INVALID');
@@ -271,7 +186,6 @@ export async function getProfile(userId: string) {
       email: true,
       displayName: true,
       phone: true,
-      emailVerified: true,
       createdAt: true,
     },
   });
@@ -298,7 +212,6 @@ export async function updateProfile(
       email: true,
       displayName: true,
       phone: true,
-      emailVerified: true,
       createdAt: true,
     },
   });

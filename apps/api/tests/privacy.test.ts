@@ -46,30 +46,20 @@ describe('Detsbee privacy & core flows', () => {
     expect(unrelatedVercel.headers['access-control-allow-origin']).toBeUndefined();
   });
 
-  it('registers a creator account', async () => {
+  it('registers a creator and signs in without requiring email verification', async () => {
     const res = await request(app).post('/api/auth/register').send({
       displayName: 'Test Creator',
       email: 'creator@test.detsbee',
       password: 'securepass1',
     });
     expect(res.status).toBe(201);
-    expect(res.body.token).toBeUndefined();
-    expect(res.body.emailVerificationRequired).toBe(true);
-
-    const unverifiedLogin = await request(app).post('/api/auth/login').send({
-      email: 'creator@test.detsbee',
-      password: 'securepass1',
-    });
-    expect(unverifiedLogin.status).toBe(403);
-    expect(unverifiedLogin.body.code).toBe('EMAIL_NOT_VERIFIED');
-
-    const verificationUrl = new URL(res.body.developmentVerificationUrl);
-    const verificationToken = verificationUrl.searchParams.get('token');
-    expect(verificationToken).toBeTruthy();
-    const verified = await request(app).post('/api/auth/verify-email').send({ token: verificationToken });
-    expect(verified.status).toBe(200);
-    const reused = await request(app).post('/api/auth/verify-email').send({ token: verificationToken });
-    expect(reused.status).toBe(400);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.emailVerificationRequired).toBeUndefined();
+    expect(res.headers['set-cookie']).toBeTruthy();
+    token = res.body.token;
+    const account = await prisma.user.findUnique({ where: { email: 'creator@test.detsbee' } });
+    expect(account).toBeTruthy();
+    await prisma.user.update({ where: { id: account!.id }, data: { emailVerified: false } });
 
     const login = await request(app).post('/api/auth/login').send({
       email: 'creator@test.detsbee',
@@ -78,42 +68,6 @@ describe('Detsbee privacy & core flows', () => {
     expect(login.status).toBe(200);
     expect(login.body.token).toBeTruthy();
     token = login.body.token;
-
-    const verifiedResend = await recoveryRequest()
-      .post('/api/auth/request-verification')
-      .send({ email: 'creator@test.detsbee' });
-    expect(verifiedResend.status).toBe(200);
-    expect(verifiedResend.body.developmentVerificationUrl).toBeUndefined();
-  });
-
-  it('rejects expired verification links and allows a replacement link', async () => {
-    const registered = await request(app).post('/api/auth/register').send({
-      displayName: 'Expiry Test',
-      email: 'verification-expiry@test.detsbee',
-      password: 'securepass1',
-    });
-    const originalToken = new URL(registered.body.developmentVerificationUrl).searchParams.get('token');
-    const user = await prisma.user.findUnique({ where: { email: 'verification-expiry@test.detsbee' } });
-    expect(user).toBeTruthy();
-    await prisma.user.update({
-      where: { id: user!.id },
-      data: { verifyTokenExpiresAt: new Date(Date.now() - 1000) },
-    });
-
-    const expired = await recoveryRequest().post('/api/auth/verify-email').send({ token: originalToken });
-    expect(expired.status).toBe(400);
-    expect(expired.body.code).toBe('VERIFICATION_LINK_INVALID');
-
-    const resent = await recoveryRequest()
-      .post('/api/auth/request-verification')
-      .send({ email: 'verification-expiry@test.detsbee' });
-    expect(resent.status).toBe(200);
-    const replacementToken = new URL(resent.body.developmentVerificationUrl).searchParams.get('token');
-    expect(replacementToken).toBeTruthy();
-    expect(replacementToken).not.toBe(originalToken);
-
-    const verified = await recoveryRequest().post('/api/auth/verify-email').send({ token: replacementToken });
-    expect(verified.status).toBe(200);
   });
 
   it('authenticates and returns profile', async () => {
@@ -252,15 +206,9 @@ describe('Detsbee privacy & core flows', () => {
       email: 'other@test.detsbee',
       password: 'securepass1',
     });
-    const otherVerificationToken = new URL(other.body.developmentVerificationUrl).searchParams.get('token');
-    await request(app).post('/api/auth/verify-email').send({ token: otherVerificationToken });
-    const otherLogin = await request(app).post('/api/auth/login').send({
-      email: 'other@test.detsbee',
-      password: 'securepass1',
-    });
     const res = await request(app)
       .get(`/api/games/${gameId}/results`)
-      .set('Authorization', `Bearer ${otherLogin.body.token}`);
+      .set('Authorization', `Bearer ${other.body.token}`);
     expect(res.status).toBe(404);
   });
 
